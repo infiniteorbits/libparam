@@ -52,7 +52,7 @@ param_src = files([
 if get_option('have_fopen') == true
 	param_src += files([
 		'src/vmem/vmem_file.c',
-		#'src/param/list/param_list_store_vmem.c',
+		'src/param/list/param_list_store_vmem.c',
 	])
 endif
 

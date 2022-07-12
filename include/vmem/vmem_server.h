@@ -13,7 +13,7 @@
 
 #define VMEM_SERVER_TIMEOUT 30000
 #define VMEM_SERVER_MTU 192
-#define VMEM_PORT_SERVER 14
+#define VMEM_PORT_SERVER 10
 #define VMEM_VERSION 2
 
 typedef enum {
