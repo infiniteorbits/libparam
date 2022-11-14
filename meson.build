@@ -4,8 +4,9 @@ conf = configuration_data()
 conf.set('PARAM_STORE_FILE', false)
 conf.set('PARAM_STORE_VMEM', false)
 conf.set('PARAM_STORE_LOG', false)
-conf.set('PARAM_HAVE_SYS_QUEUE', get_option('list_dynamic'))
+conf.set('PARAM_HAVE_SYS_QUEUE', get_option('list_dynamic') or get_option('list_pool') > 0)
 conf.set('PARAM_LIST_DYNAMIC', get_option('list_dynamic'))
+conf.set('PARAM_LIST_POOL', get_option('list_pool'))
 conf.set('PARAM_HAVE_SCHEDULER', get_option('scheduler'))
 conf.set('PARAM_HAVE_COMMANDS', get_option('commands'))
 
@@ -39,7 +40,7 @@ param_src = files([
 	'src/param/param_wildcard.c',
 	'src/param/param.c',
 
-	'lib/mpack/mpack.c',
+	'src/mpack/mpack.c',
 
 	'src/vmem/vmem_client.c',
 	'src/vmem/vmem_ram.c',
@@ -124,7 +125,7 @@ if get_option('slash') == true
 	endif
 endif
 
-param_inc = include_directories('.', 'include', 'lib')
+param_inc = include_directories('.', 'include')
 
 param_lib = static_library('param',
 	sources: [param_src, libparam_h],

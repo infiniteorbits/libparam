@@ -83,7 +83,8 @@ static void param_serve_pull_request(csp_packet_t * request, int all, int versio
 		mpack_reader_init_data(&reader, q_request.buffer, q_request.used);
 		while(reader.data < reader.end) {
 			int id, node, offset = -1;
-			param_deserialize_id(&reader, &id, &node, &offset, &q_request);
+			long unsigned int timestamp = 0;
+			param_deserialize_id(&reader, &id, &node, &timestamp, &offset, &q_request);
 			if (server_addr == node)
 				node = 0;
 			param_t * param = param_list_find_id(node, id);
@@ -128,16 +129,24 @@ static void param_serve_pull_request(csp_packet_t * request, int all, int versio
 
 }
 
+/**
+ * @brief Apply a parameter queue parsed from the provided packet.
+ *
+ * @param packet Packet containing the parameter queue.
+ * @param node_override 1 to allow parameters to be applied to local parameters.
+ */
 static void param_serve_push(csp_packet_t * packet, int send_ack, int version, int node_override) {
 
 	//csp_hex_dump("set handler", packet->data, packet->length);
 
 	param_queue_t queue;
 	param_queue_init(&queue, &packet->data[2], packet->length - 2, packet->length - 2, PARAM_QUEUE_TYPE_SET, version);
-	int result = param_queue_apply(&queue, node_override, 0);
+	int result = param_queue_apply(&queue, node_override, packet->id.src, 0);
 
 	if ((result != 0) || (send_ack == 0)) {
-		printf("Param serve push error, result = %d\n", result);
+		if (result != 0) {
+			printf("Param serve push error, result = %d\n", result);
+		}
 		csp_buffer_free(packet);
 		return;
 	}

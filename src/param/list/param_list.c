@@ -213,6 +213,94 @@ void param_list_print(uint32_t mask, int node, char * globstr, int verbosity) {
 	}
 }
 
+unsigned int param_list_packed_size(int list_version) {
+	switch (list_version) {
+		case 1: return sizeof(param_transfer_t);
+		case 2: return sizeof(param_transfer2_t);
+		case 3: return sizeof(param_transfer3_t);
+		default: return 0;
+	}
+}
+
+int param_list_unpack(int node, void * data, int length, int list_version) {
+
+	uint16_t strlen;
+	uint16_t addr;
+	uint16_t id;
+	uint8_t type;
+	unsigned int size;
+	uint32_t mask;
+	uint16_t storage_type = -1;
+	char * name;
+	char * unit;
+	char * help;
+
+	if (list_version == 1) {
+
+		param_transfer_t * new_param = data;
+		name = new_param->name;
+		strlen = length - offsetof(param_transfer_t, name);
+		name[strlen] = '\0';
+		addr = be16toh(new_param->id) >> 11;
+		id = be16toh(new_param->id) & 0x7FF;
+		type = new_param->type;
+		size = new_param->size;
+		mask = be32toh(new_param->mask) | PM_REMOTE;
+		unit = NULL;
+		help = NULL;
+
+	} else if (list_version == 2) {
+
+		param_transfer2_t * new_param = data;
+		name = new_param->name;
+		strlen = length - offsetof(param_transfer2_t, name);
+		name[strlen-1] = '\0';			
+		addr = be16toh(new_param->node);
+		id = be16toh(new_param->id);
+		type = new_param->type;
+		size = new_param->size;
+		mask = be32toh(new_param->mask) | PM_REMOTE;
+		unit = NULL;
+		help = NULL;
+
+	} else {
+
+		param_transfer3_t * new_param = data;
+		name = new_param->name;
+		addr = be16toh(new_param->node);
+		id = be16toh(new_param->id);
+		type = new_param->type;
+		size = new_param->size;
+		mask = be32toh(new_param->mask) | PM_REMOTE;
+		storage_type = new_param->storage_type;
+		unit = new_param->unit;
+		help = new_param->help;
+
+	}
+
+	if (addr == 0)
+		addr = node;
+
+	if (size == 255)
+		size = 1;
+
+	//printf("Storage type %d\n", storage_type);
+
+	param_t * param = param_list_create_remote(id, addr, type, mask, size, name, unit, help, storage_type);
+
+	if (param != NULL) {
+		printf("Got param: %s:%u[%d]\n", param->name, param->node, param->array_size);
+
+		/* Add to list */
+		if (param_list_add(param) != 0)
+			param_list_destroy(param);
+
+		return 0;
+	} else {
+		return -1;
+	}
+}
+
 int param_list_download(int node, int timeout, int list_version) {
 
 	/* Establish RDP connection */
@@ -225,80 +313,10 @@ int param_list_download(int node, int timeout, int list_version) {
 	while((packet = csp_read(conn, timeout)) != NULL) {
 
 		//csp_hex_dump("Response", packet->data, packet->length);
-
-		int strlen;
-		int addr;
-		int id;
-		int type;
-		int size;
-		int mask;
-		int storage_type = -1;
-		char * name;
-		char * unit;
-		char * help;
-
-	    if (list_version == 1) {
-
-	        param_transfer_t * new_param = (void *) packet->data;
-	        name = new_param->name;
-			strlen = packet->length - offsetof(param_transfer_t, name);
-			name[strlen] = '\0';
-	        addr = be16toh(new_param->id) >> 11;
-            id = be16toh(new_param->id) & 0x7FF;
-            type = new_param->type;
-            size = new_param->size;
-            mask = be32toh(new_param->mask) | PM_REMOTE;
-			unit = NULL;
-			help = NULL;
-
-	    } else if (list_version == 2) {
-
-	        param_transfer2_t * new_param = (void *) packet->data;
-	        name = new_param->name;
-			strlen = packet->length - offsetof(param_transfer2_t, name);
-			name[strlen] = '\0';			
-            addr = be16toh(new_param->node);
-            id = be16toh(new_param->id) & 0x7FF;
-            type = new_param->type;
-            size = new_param->size;
-            mask = be32toh(new_param->mask) | PM_REMOTE;
-			unit = NULL;
-			help = NULL;
-
-	    } else {
-
-			param_transfer3_t * new_param = (void *) packet->data;
-	        name = new_param->name;
-            addr = be16toh(new_param->node);
-            id = be16toh(new_param->id) & 0x7FF;
-            type = new_param->type;
-            size = new_param->size;
-            mask = be32toh(new_param->mask) | PM_REMOTE;
-			storage_type = new_param->storage_type;
-			unit = new_param->unit;
-			help = new_param->help;
-
-		}
-
-		if (addr == 0)
-			addr = node;
-
-		if (size == 255)
-			size = 1;
-
-		//printf("Storage type %d\n", storage_type);
-
-		param_t * param = param_list_create_remote(id, addr, type, mask, size, name, unit, help, storage_type);
-		if (param == NULL) {
+		if (param_list_unpack(node, packet->data, packet->length, list_version) < 0) {
 			csp_buffer_free(packet);
 			break;
 		}
-
-		printf("Got param: %s:%u[%d]\n", param->name, param->node, param->array_size);
-
-		/* Add to list */
-		if (param_list_add(param) != 0)
-			param_list_destroy(param);
 
 		csp_buffer_free(packet);
 		count++;
@@ -310,9 +328,165 @@ int param_list_download(int node, int timeout, int list_version) {
 	return count;
 }
 
+int param_list_pack(void* buf, int buf_size, int prio_only, int remote_only, int list_version) {
+
+	param_t * param;
+	int num_params = 0;
+
+	void* param_packed = buf;
+	param_list_iterator i = {};
+	while ((param = param_list_iterate(&i)) != NULL) {
+		if (prio_only && (param->mask & PM_PRIO_MASK) == 0)
+			continue;
+
+		if (remote_only && param->node == 0)
+			continue;
+
+		if (list_version == 1) {
+			
+			// Not supported
+
+		} else if (list_version == 2) {
+
+			param_transfer2_t * rparam = param_packed;
+			int node = param->node;
+			rparam->id = htobe16(param->id);
+			rparam->node = htobe16(node);
+			rparam->type = param->type;
+			rparam->size = param->array_size;
+			rparam->mask = htobe32(param->mask);
+			
+			strncpy(rparam->name, param->name, strlen(rparam->name));
+
+		} else {
+
+			param_transfer3_t * rparam = param_packed;
+			int node = param->node;
+			rparam->id = htobe16(param->id);
+			rparam->node = htobe16(node);
+			rparam->type = param->type;
+			rparam->size = param->array_size;
+			rparam->mask = htobe32(param->mask);
+			
+			strncpy(rparam->name, param->name, strlen(rparam->name));
+
+			if (param->vmem) {
+				rparam->storage_type = param->vmem->type;
+			}
+
+			if (param->unit != NULL) {
+				strncpy(rparam->unit, param->unit, strlen(rparam->unit));
+			}
+
+			if (param->docstr != NULL) {
+				strncpy(rparam->help, param->docstr, strlen(rparam->help));
+			}
+		}
+		
+		param_packed += param_list_packed_size(list_version);
+		num_params++;
+
+		if (param_packed + param_list_packed_size(list_version) > buf + buf_size) {
+			printf("Buffer size too small to hold parameters");
+			break;
+		}
+	}
+
+	return num_params;
+	
+}
+
+#if defined PARAM_LIST_DYNAMIC && PARAM_LIST_POOL > 0
+#error Dynamic and static param lists cannot co-exist
+#endif
+
+#if PARAM_LIST_POOL > 0
+
+typedef struct param_heap_s {
+	param_t param;
+	union {
+		uint64_t alignme;
+		uint8_t *buffer;
+	};
+	char name[36];
+	char unit[10];
+	char help[150];
+} param_heap_t;
+
+static param_heap_t param_heap[PARAM_LIST_POOL];
+static uint32_t param_heap_used = 0;
+static uint8_t param_buffer[PARAM_LIST_POOL * 8]; /* Estimated average size of buffers */
+static uint32_t param_buffer_used = 0;
+
+static param_heap_t * param_list_alloc(int type, int array_size) {
+
+	int buffer_required = param_typesize(type) * array_size;
+
+	if (param_heap_used >= PARAM_LIST_POOL || param_buffer_used + buffer_required > sizeof(param_buffer)) {
+		return NULL;
+	}
+
+	param_heap_t* param = &param_heap[param_heap_used];
+	param_heap_used++;
+
+	param->buffer = &param_buffer[param_buffer_used];
+	param_buffer_used += buffer_required;
+	return param;
+}
+
+void param_list_clear() {
+
+	SLIST_INIT(&param_list_head);
+	param_heap_used = 0;
+	param_buffer_used = 0;
+}
+
+/* WARNING: This function resets complete list */
+static void param_list_destroy_impl(param_t * param) {
+
+	param_heap_used = 0;
+	param_buffer_used = 0;
+}
+
+#endif
+
 #ifdef PARAM_LIST_DYNAMIC
-void param_list_destroy(param_t * param) {
+
+typedef struct param_heap_s {
+	param_t param;
+	union {
+		uint64_t alignme;
+		uint8_t *buffer;
+	};
+	char name[36];
+	char unit[10];
+	char help[150];
+} param_heap_t;
+
+static param_heap_t * param_list_alloc(int type, int array_size) {
+
+	param_heap_t * param_heap = calloc(1, sizeof(param_heap_t));
+	if (param_heap == NULL) {
+		return NULL;
+	}
+	param_heap->buffer = calloc(param_typesize(type), array_size);
+	if (param_heap->buffer == NULL) {
+		return NULL;
+	}
+
+	return param_heap;
+}
+
+static void param_list_destroy_impl(param_t * param) {
+	free(param->addr);
 	free(param);
+}
+#endif
+
+#if defined PARAM_LIST_DYNAMIC || PARAM_LIST_POOL > 0
+
+void param_list_destroy(param_t * param) {
+	param_list_destroy_impl(param);
 }
 
 param_t * param_list_create_remote(int id, int node, int type, uint32_t mask, int array_size, char * name, char * unit, char * help, int storage_type) {
@@ -320,17 +494,11 @@ param_t * param_list_create_remote(int id, int node, int type, uint32_t mask, in
 	if (array_size < 1)
 		array_size = 1;
 
-	struct param_heap_s {
-		param_t param;
-		union {
-			uint64_t alignme;
-			uint8_t buffer[param_typesize(type) * array_size];
-		};
-		char name[36];
-		char unit[10];
-		char help[150];
-	} *param_heap = calloc(sizeof(struct param_heap_s), 1);
-
+	param_heap_t * param_heap = param_list_alloc(type, array_size);
+	if (param_heap == NULL) {
+		return NULL;
+	}
+	
 	param_t * param = &param_heap->param;
 	if (param == NULL) {
 		return NULL;
@@ -355,6 +523,7 @@ param_t * param_list_create_remote(int id, int node, int type, uint32_t mask, in
 
 	switch(storage_type) {
 		case -1:
+		case 65535:
 			break;
 		case 0:
 		case 1:

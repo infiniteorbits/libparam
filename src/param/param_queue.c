@@ -8,7 +8,6 @@
 #include <stdio.h>
 #include <csp/csp.h>
 #include <mpack/mpack.h>
-#include <mpack/mpack-config.h>
 
 #include <param/param.h>
 #include <param/param_server.h>
@@ -24,6 +23,7 @@ void param_queue_init(param_queue_t *queue, void *buffer, int buffer_size, int u
 	queue->type = type;
 	queue->used = used;
 	queue->version = version;
+	queue->last_timestamp = 0;
 }
 
 int param_queue_add(param_queue_t *queue, param_t *param, int offset, void *value) {
@@ -54,7 +54,7 @@ int param_queue_add(param_queue_t *queue, param_t *param, int offset, void *valu
 	return 0;
 }
 
-int param_queue_apply(param_queue_t *queue, int apply_local, int from) {
+int param_queue_apply(param_queue_t *queue, int apply_local, int from, int store_timestamp) {
 	int return_code = 0;
 	int atomic_write = 0;
 
@@ -62,7 +62,8 @@ int param_queue_apply(param_queue_t *queue, int apply_local, int from) {
 	mpack_reader_init_data(&reader, queue->buffer, queue->used);
 	while(reader.data < reader.end) {
 		int id, node, offset = -1;
-		param_deserialize_id(&reader, &id, &node, &offset, queue);
+		long unsigned int timestamp = 0;
+		param_deserialize_id(&reader, &id, &node, &timestamp, &offset, queue);
 
 		/* If the from address is set, and the nodeid is 0, substitue with the source address */
 		if (node == 0)
@@ -89,6 +90,10 @@ int param_queue_apply(param_queue_t *queue, int apply_local, int from) {
 				if (param_enter_critical)
 					param_enter_critical();
 			}
+
+			if (store_timestamp)
+				param->timestamp = timestamp;
+
 			param_deserialize_from_mpack_to_param(NULL, queue, param, offset, &reader);
 		} else {
 			// We couldn't find all parameters. Skip this one.

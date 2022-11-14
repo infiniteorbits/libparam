@@ -60,6 +60,10 @@ typedef enum {
  * spent in critical region.
  */
 #define PM_ATOMIC_WRITE        (1 << 11) //! o: Parameter must be written atomically.
+#define PM_PRIO1               (1 << 12) //! q: Priority of parameter for telemetry logging (two bits)
+#define PM_PRIO2               (2 << 12) //! q: Priority of parameter for logging and retrieval (two bits)
+#define PM_PRIO3               (3 << 12) //! q: Priority of parameter for logging and retrieval (two bits)
+#define PM_PRIO_MASK           (3 << 12) //! q: Priority of parameter for logging and retrieval (two bits)
 
 /* Reserved flags:
  * Lower 16 is parameter system, upper 16 are user flags  */
@@ -218,6 +222,7 @@ PARAM_SET(double, double)
 
 /* Non-native types needs to go through a function which includes a void pointer and the length */
 void param_set_data(param_t * param, void * inbuf, int len);
+void param_set_data_nocallback(param_t * param, void * inbuf, int len);
 void param_get_data(param_t * param, void * outbuf, int len);
 void param_set_string(param_t * param, void * inbuf, int len);
 #define param_get_string param_get_data
